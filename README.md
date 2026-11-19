@@ -38,7 +38,7 @@
 - 页头「自动刷新 [N] 分钟」，`0` = 关闭（默认 0）。设了 N 就每 N 分钟在后台拉一次，切到别的标签页也照跑。
 - 用量跨过 85% / 90% / 98% 各弹一次桌面通知，标题写窗口名与档位，正文带账号、百分比和重置时间。同一条线只报一次，掉回 85% 以下重新武装。
 - 通知走浏览器 Notification：第一次设置时弹授权；拒了就一直只在页面顶部显示提示条，卡片颜色照常变。
-- 间隔存在浏览器 localStorage（`dsh-opencode-usage:auto-minutes`）。DSH 窗口最小化仍会通知，整个应用退出就不再拉。
+- 间隔存在浏览器 localStorage（`opencode-manage:auto-minutes`）；插件改名前的旧键 `dsh-opencode-usage:auto-minutes` 会在第一次读取时自动搬过来并删掉，不用重设。DSH 窗口最小化仍会通知，整个应用退出就不再拉。
 
 ## 自动切号（OpenCode Go Auto）
 

@@ -28,12 +28,35 @@ window.__ModuleLoader__.load({
 
     /** 桌面通知的三道线：跨过才算一次，掉回 85% 以下重新武装。 */
     const NOTIFY_TIERS = [85, 90, 98]
-    const AUTO_KEY = 'dsh-opencode-usage:auto-minutes' // 保留旧键名，用户的间隔设置不丢
+    const AUTO_KEY = 'opencode-manage:auto-minutes'
+    /** 插件改名前的旧键：读到就搬到新键上，用户的间隔设置不用重设。 */
+    const LEGACY_AUTO_KEY = 'dsh-opencode-usage:auto-minutes'
+
+    function clampMinutes(raw) {
+      const value = Number(raw)
+      return Number.isFinite(value) && value > 0 ? Math.min(1440, Math.round(value)) : 0
+    }
+
+    function readAutoMinutesFrom(storage) {
+      if (!storage) return 0
+      const currentRaw = storage.getItem(AUTO_KEY)
+      if (currentRaw !== null) return clampMinutes(currentRaw) // 显式设成 0 也算数，别被旧键复活
+      const legacy = clampMinutes(storage.getItem(LEGACY_AUTO_KEY))
+      if (legacy > 0) {
+        try {
+          storage.setItem(AUTO_KEY, String(legacy))
+          storage.removeItem(LEGACY_AUTO_KEY)
+        } catch {
+          /* 搬迁失败不影响本次读取 */
+        }
+        return legacy
+      }
+      return 0
+    }
 
     function readAutoMinutes() {
       try {
-        const raw = Number(window.localStorage.getItem(AUTO_KEY))
-        return Number.isFinite(raw) && raw > 0 ? Math.min(1440, Math.round(raw)) : 0
+        return readAutoMinutesFrom(window.localStorage)
       } catch {
         return 0
       }
