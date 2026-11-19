@@ -8,7 +8,7 @@
  */
 
 window.__ModuleLoader__.load({
-  id: 'dsh-opencode-usage',
+  id: '@pcysanji/dsh-opencode-usage',
   factory(require) {
     'use strict'
 

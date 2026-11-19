@@ -1,5 +1,5 @@
 {
-  "name": "dsh-opencode-usage",
+  "name": "@pcysanji/dsh-opencode-usage",
   "version": "0.2.0",
   "type": "module",
   "description": "DSH 插件：会话标签页里一屏查看多个 OpenCode Go 账号的 5 小时 / 周 / 月额度，支持手动加号、自动刷新、用量提醒，以及「OpenCode Go 自动」路由后台换 key。",
@@ -42,5 +42,16 @@
   ],
   "engines": {
     "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pcysanji/dsh-opencode-usage.git"
+  },
+  "homepage": "https://github.com/pcysanji/dsh-opencode-usage#readme",
+  "bugs": {
+    "url": "https://github.com/pcysanji/dsh-opencode-usage/issues"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

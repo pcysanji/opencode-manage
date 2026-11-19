@@ -1,6 +1,17 @@
-# dsh-opencode-usage
+# @pcysanji/dsh-opencode-usage
 
 在会话标签行加一页「Go 余额」：一个账号一张卡片，同时看多个 OpenCode Go 账号的 5 小时 / 本周 / 本月额度。
+
+## 安装
+
+发布在 npm：`@pcysanji/dsh-opencode-usage`；源码：<https://github.com/pcysanji/dsh-opencode-usage>。
+
+装进某个 DSH profile 的两种方式（都要重启桌面端才生效）：
+
+- 插件管理面板里装 `@pcysanji/dsh-opencode-usage`。
+- 手动：在该 profile 的 `package.json` 里加依赖 `"@pcysanji/dsh-opencode-usage": "link:<本仓库绝对路径>"`（或版本号），把它加进 `dsh.profile.bundles`，再 `pnpm install`。
+
+插件自带 `cordis.patch.yml`，客户端半边由 `package.json` 的 `dsh.client` 自动装载，不需要另外配置。
 
 ## 怎么看
 
