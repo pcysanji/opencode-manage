@@ -1,0 +1,4 @@
+# dsh-opencode-usage：把插件本体登记进 Loader（客户端半靠 package.json 的 dsh.client 自动装载）。
+- insert:
+    - id: opencode-usage
+      name: 'dsh-opencode-usage'

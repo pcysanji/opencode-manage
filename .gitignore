@@ -1,0 +1,9 @@
+node_modules/
+npm-debug.log*
+*.tgz
+.DS_Store
+# 本地调试产物（预览页、截图、临时脚本）
+preview/
+_*_*.js
+_*_*.md
+CODE-GRAPH.md
