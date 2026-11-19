@@ -1,5 +1,5 @@
 /**
- * dsh-opencode-usage — 客户端半边。
+ * opencode-manage — 客户端半边。
  *
  * 会话标签行（对话 | 轨迹 | 上下文 | 编队 | 记忆系统 | …）末尾加一个「Go 余额」标签页。
  * 一个账号一张卡片，卡内三个环形表盘（5 小时 / 本周 / 本月）。
@@ -8,7 +8,7 @@
  */
 
 window.__ModuleLoader__.load({
-  id: '@pcysanji/dsh-opencode-usage',
+  id: 'opencode-manage',
   factory(require) {
     'use strict'
 
@@ -17,7 +17,7 @@ window.__ModuleLoader__.load({
 
     const SLOT = 'conversation.view'
     const SLOT_ID = 'opencode-usage'
-    const STYLE_ID = 'dsh-opencode-usage-style'
+    const STYLE_ID = 'opencode-manage-style'
     const API = '/opencode-usage/api'
 
     const WINDOWS = [
@@ -28,7 +28,7 @@ window.__ModuleLoader__.load({
 
     /** 桌面通知的三道线：跨过才算一次，掉回 85% 以下重新武装。 */
     const NOTIFY_TIERS = [85, 90, 98]
-    const AUTO_KEY = 'dsh-opencode-usage:auto-minutes'
+    const AUTO_KEY = 'dsh-opencode-usage:auto-minutes' // 保留旧键名，用户的间隔设置不丢
 
     function readAutoMinutes() {
       try {

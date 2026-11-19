@@ -1,5 +1,5 @@
 /**
- * dsh-opencode-usage — 宿主半边。
+ * opencode-manage — 宿主半边。
  *
  * 只做三件事：
  * 1. 认账号：DSH 模型配置里 baseURL 指向 opencode.ai 的 provider + .credentials.yaml 里 OPENCODE* 的 key + 用户手填的账号；
@@ -275,7 +275,7 @@ async function fetchUsage(key) {
         method: 'GET',
         headers: {
           authorization: `Bearer ${key}`,
-          'x-opencode-session': 'dsh-opencode-usage',
+          'x-opencode-session': 'opencode-manage',
           accept: 'application/json',
         },
         signal: AbortSignal.timeout(12000),
@@ -558,18 +558,18 @@ export function apply(ctx) {
         path: ROUTE,
         handler: (req, res) => handleRequest(ctx, req, res),
       }),
-    'dsh-opencode-usage api',
+    'opencode-manage api',
   )
 
   const guard = (error) => console.warn('[opencode-usage] 自动路由检查失败：', error)
 
   ctx.effect(
     () => ctx.timer.interval(() => { routerRun(ctx).catch(guard) }, TICK_MS),
-    'dsh-opencode-usage router interval',
+    'opencode-manage router interval',
   )
 
   ctx.effect(
     () => ctx.timer.timeout(() => { routerRun(ctx).catch(guard) }, ROUTER_BOOT_MS),
-    'dsh-opencode-usage router boot',
+    'opencode-manage router boot',
   )
 }
