@@ -35,8 +35,8 @@ fs.writeFileSync(
 
 // ---- 上游用量：按 Bearer key 给不同数字 ----
 const usage = {
-  'oc_sk_aaaa_0001': { weekly: 10, monthly: 40, monthlyReset: '2026-12-01T00:00:00.000Z' },
-  'oc_sk_bbbb_0002': { weekly: 10, monthly: 20, monthlyReset: '2026-11-25T00:00:00.000Z' },
+  'oc_sk_aaaa_0001': { rolling: 1, weekly: 10, monthly: 40, monthlyReset: '2026-12-01T00:00:00.000Z' },
+  'oc_sk_bbbb_0002': { rolling: 1, weekly: 10, monthly: 20, monthlyReset: '2026-11-25T00:00:00.000Z' },
 }
 
 const realFetch = globalThis.fetch
@@ -49,7 +49,7 @@ globalThis.fetch = async (url, init) => {
     status: 200,
     json: async () => ({
       usage: {
-        rolling: { status: 'ok', percent: 1, resetsAt: row.monthlyReset },
+        rolling: { status: 'ok', percent: row.rolling ?? 1, resetsAt: row.monthlyReset },
         weekly: { status: 'ok', percent: row.weekly, resetsAt: '2026-11-24T00:00:00.000Z' },
         monthly: { status: 'ok', percent: row.monthly, resetsAt: row.monthlyReset },
       },
@@ -205,6 +205,61 @@ check('状态写进 router.json', () => {
   const saved = JSON.parse(fs.readFileSync(stateFile, 'utf8'))
   assert.ok(saved.checkedAt)
   assert.ok(['ref:OPENCODE_API_KEY', 'ref:OPENCODE_GO_API_KEY'].includes(saved.activeId))
+})
+
+// 8. 5 小时窗口到 99.9% 也要换号
+usage['oc_sk_bbbb_0002'].rolling = 99.9
+usage['oc_sk_aaaa_0001'].rolling = 1
+status = await call('POST', '/router/tick', {})
+check('5 小时窗口 99.9% 换到下一个', () => {
+  assert.equal(status.activeId, 'ref:OPENCODE_API_KEY')
+  const blocked = status.lastCheck.rows.find((row) => row.id === 'ref:OPENCODE_GO_API_KEY')
+  assert.equal(blocked.blocked, 'rolling')
+})
+check('chip 带 5 小时用量', () => {
+  const row = status.lastCheck.rows.find((entry) => entry.id === 'ref:OPENCODE_API_KEY')
+  assert.equal(typeof row.rolling, 'number')
+})
+
+// 9. 手动指定：切到指定号，并且自动逻辑不抢
+usage['oc_sk_bbbb_0002'].rolling = 1
+usage['oc_sk_bbbb_0002'].weekly = 10
+usage['oc_sk_bbbb_0002'].monthly = 20
+usage['oc_sk_aaaa_0001'].monthly = 40
+const picked = await call('POST', '/router/manual', { id: 'ref:OPENCODE_GO_API_KEY' })
+check('手动切到指定账号', () => {
+  assert.equal(picked.activeId, 'ref:OPENCODE_GO_API_KEY')
+  assert.equal(picked.manualId, 'ref:OPENCODE_GO_API_KEY')
+  assert.equal(writes.at(-1)[1], 'oc_sk_bbbb_0002')
+})
+const keep = await call('POST', '/router/tick', {})
+check('手动期间自动不抢（即使另一个月重置更早）', () => {
+  assert.equal(keep.activeId, 'ref:OPENCODE_GO_API_KEY')
+  assert.equal(keep.manualId, 'ref:OPENCODE_GO_API_KEY')
+})
+
+// 10. 手动指定的号自己爆额度 → 退回自动并留痕
+usage['oc_sk_bbbb_0002'].monthly = 100
+const dropped = await call('POST', '/router/tick', {})
+check('手动号爆额度后回到自动', () => {
+  assert.equal(dropped.manualId, null)
+  assert.equal(dropped.activeId, 'ref:OPENCODE_API_KEY')
+  assert.ok(dropped.manualDropped && dropped.manualDropped.reason, '应留下失效原因')
+})
+
+// 11. 空 id = 交回自动
+usage['oc_sk_bbbb_0002'].monthly = 20
+const pick2 = await call('POST', '/router/manual', { id: 'ref:OPENCODE_GO_API_KEY' })
+check('再手动指定一次', () => assert.equal(pick2.manualId, 'ref:OPENCODE_GO_API_KEY'))
+const backAuto = await call('POST', '/router/manual', { id: '' })
+check('传空 id 回到自动', () => {
+  assert.equal(backAuto.manualId, null)
+})
+
+// 12. 指定不存在的账号 → 404
+const res404 = await call('POST', '/router/manual', { id: 'ref:NOPE' }).catch((error) => error.message)
+check('指定不存在的账号报错', () => {
+  assert.ok(String(res404).includes('404'), String(res404))
 })
 
 globalThis.fetch = realFetch

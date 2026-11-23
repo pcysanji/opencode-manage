@@ -282,8 +282,13 @@ window.__ModuleLoader__.load({
       routerToggleOff: '关闭',
       routerLast: '上次换号',
       routerBlocked: '停用',
-      routerHint: '每 5 分钟在后台看一眼周/月额度：谁先重置用谁；周额度到 99.9% 换下一个；月额度到 100% 停用到下个重置日。',
-      routerModelHint: '模型列表里的「OpenCode Go Auto」用这份 key，换号下一次请求就生效。',
+      routerHint: '每 5 分钟在后台看一眼 5 小时/周/月额度：谁先重置用谁；5 小时或周额度到 99.9% 换下一个；月额度到 100% 停用到下个重置日。点某个账号可以直接切过去。',
+      routerModelHint: '模型列表里的「OpenCode Go 自动」用这份 key，换号下一次请求就生效。',
+      routerManual: '手动',
+      routerManualOn: '手动指定中',
+      routerBackAuto: '回到自动',
+      routerPickHint: '点一下立即切到这个账号（手动指定，自动逻辑不再抢；它自己爆额度或你点「回到自动」才交回）',
+      routerManualDropped: '手动指定的号不可用了，已回到自动',
       routerSwitched: '已换号',
       routerSame: '不用换',
       routerCheckedAt: '检查于',
@@ -612,8 +617,9 @@ window.__ModuleLoader__.load({
 .ocu-router-actions { display: flex; gap: 6px; }
 .ocu-queue { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .ocu-chip {
-  display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border-radius: 999px;
-  font-size: 11px; color: var(--dsw-alias-label-secondary);
+  display: inline-flex; align-items: center; gap: 7px; padding: 4px 10px; border-radius: 999px;
+  font-family: inherit; font-size: 11px; line-height: 1.5; white-space: nowrap;
+  color: var(--dsw-alias-label-secondary);
   border: 1px solid var(--dsw-alias-border-l1);
   background: color-mix(in srgb, var(--dsw-alias-label-primary) 3%, transparent);
 }
@@ -623,6 +629,14 @@ window.__ModuleLoader__.load({
   background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 12%, transparent);
 }
 .ocu-chip.is-blocked { opacity: .5; }
+.ocu-chip.is-clickable { cursor: pointer; }
+.ocu-chip.is-clickable:hover {
+  border-color: color-mix(in srgb, var(--dsw-alias-state-business-primary) 40%, transparent);
+  color: var(--dsw-alias-label-primary);
+}
+.ocu-chip.is-clickable:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary); outline-offset: 2px; }
+.ocu-chip.is-manual { border-style: dashed; border-color: color-mix(in srgb, var(--dsw-alias-state-business-primary) 55%, transparent); }
+.ocu-chip-tag.is-manual { color: var(--dsw-alias-state-business-primary); }
 .ocu-chip-no { font-variant-numeric: tabular-nums; color: var(--dsw-alias-label-tertiary); }
 .ocu-chip-num { font-variant-numeric: tabular-nums; color: var(--dsw-alias-label-tertiary); }
 .ocu-chip-tag { color: var(--dsw-alias-state-error-primary); font-size: 10px; }
@@ -658,7 +672,7 @@ window.__ModuleLoader__.load({
           {
             className: 'ocu-gauge-ring',
             role: 'img',
-            'aria-label': `${meta.name}：${percent === null ? '无数据' : Math.round(percent) + '%'} 已用`,
+            'aria-label': `${meta.name}：${percent === null ? '无数据' : fmtPct(percent) + ' 已用'}`,
           },
           h(
             'svg',
@@ -672,7 +686,7 @@ window.__ModuleLoader__.load({
               strokeDasharray: `${filled} ${CIRCUMFERENCE - filled}`,
             }),
           ),
-          h('span', { className: 'ocu-gauge-value' }, percent === null ? '—' : `${Math.round(percent)}%`),
+          h('span', { className: 'ocu-gauge-value' }, fmtPct(percent)),
         ),
         h('span', { className: 'ocu-gauge-label' }, meta.name),
         h('span', { className: 'ocu-gauge-reset' }, data && data.resetsAt ? fmtReset(data.resetsAt) : ''),
@@ -907,11 +921,12 @@ window.__ModuleLoader__.load({
       return `${Number.isInteger(rounded) ? rounded : rounded.toFixed(1)}%`
     }
 
-    function RouterBar({ status, busy, onTick, onToggle }) {
+    function RouterBar({ status, busy, onTick, onToggle, onPick, picking }) {
       if (!status) return null
       const on = status.enabled !== false
       const rows = status.lastCheck && Array.isArray(status.lastCheck.rows) ? status.lastCheck.rows : []
       const activeId = status.activeId || ''
+      const manualId = status.manualId || ''
 
       return h(
         'div',
@@ -922,6 +937,7 @@ window.__ModuleLoader__.load({
           h('span', { className: 'ocu-router-dot' }),
           h('span', { className: 'ocu-router-name' }, COPY.routerTitle),
           h('span', { className: 'ocu-router-state' }, on ? COPY.routerOn : COPY.routerOff),
+          manualId ? h('span', { className: 'ocu-chip-tag is-manual' }, COPY.routerManualOn) : null,
           h('span', { className: 'ocu-router-sep' }, '·'),
           h(
             'span',
@@ -936,6 +952,9 @@ window.__ModuleLoader__.load({
             { className: 'ocu-router-actions' },
             h('button', { className: 'ocu-btn', disabled: busy, onClick: onTick, title: COPY.routerHint }, busy ? COPY.routerChecking : COPY.routerCheck),
             h('button', { className: 'ocu-btn', onClick: onToggle }, on ? COPY.routerToggleOff : COPY.routerToggleOn),
+            manualId
+              ? h('button', { className: 'ocu-btn', disabled: picking, onClick: () => onPick('') }, COPY.routerBackAuto)
+              : null,
           ),
         ),
         rows.length
@@ -944,16 +963,28 @@ window.__ModuleLoader__.load({
               { className: 'ocu-queue' },
               rows.map((row, index) =>
                 h(
-                  'span',
+                  'button',
                   {
                     key: row.id,
-                    className: `ocu-chip${row.blocked ? ' is-blocked' : row.id === activeId ? ' is-active' : ''}`,
-                    title: row.blocked ? row.reason : COPY.routerHint,
+                    type: 'button',
+                    disabled: picking,
+                    className: [
+                      'ocu-chip',
+                      'is-clickable',
+                      row.blocked ? 'is-blocked' : '',
+                      row.id === activeId ? 'is-active' : '',
+                      row.id === manualId ? 'is-manual' : '',
+                    ]
+                      .filter(Boolean)
+                      .join(' '),
+                    title: row.blocked ? `${row.reason}（也可以点，切过去会立刻报错）` : COPY.routerPickHint,
+                    onClick: () => onPick(row.id === manualId ? '' : row.id),
                   },
                   h('span', { className: 'ocu-chip-no' }, String(index + 1)),
                   h('span', null, row.label),
-                  h('span', { className: 'ocu-chip-num' }, `周${fmtPct(row.weekly)} · 月${fmtPct(row.monthly)}`),
+                  h('span', { className: 'ocu-chip-num' }, `5h${fmtPct(row.rolling)} · 周${fmtPct(row.weekly)} · 月${fmtPct(row.monthly)}`),
                   row.blocked ? h('span', { className: 'ocu-chip-tag' }, COPY.routerBlocked) : null,
+                  row.id === manualId ? h('span', { className: 'ocu-chip-tag is-manual' }, COPY.routerManual) : null,
                 ),
               ),
             )
@@ -979,6 +1010,7 @@ window.__ModuleLoader__.load({
       const [notice, setNotice] = React.useState(() => (AUTO.minutes > 0 ? autoNotice(AUTO.minutes) : ''))
       const [router, setRouter] = React.useState(() => ROUTER_UI.status)
       const [routerBusy, setRouterBusy] = React.useState(false)
+      const [picking, setPicking] = React.useState(false)
       const mountedRef = React.useRef(true)
 
       React.useEffect(() => {
@@ -1020,6 +1052,13 @@ window.__ModuleLoader__.load({
         AUTO.subscribers.add(onAuto)
         return () => AUTO.subscribers.delete(onAuto)
       }, [])
+
+      // 手动指定的号失效（比如自己爆了额度）时，宿主会把标记清掉并留痕，这里提示一句
+      React.useEffect(() => {
+        if (router && router.manualDropped && router.manualDropped.at) {
+          setNotice(`${COPY.routerManualDropped}（${router.manualDropped.label || ''}${router.manualDropped.reason ? `：${router.manualDropped.reason}` : ''}）`)
+        }
+      }, [router && router.manualDropped && router.manualDropped.at])
 
       // 自动切号状态：进页面先拿一次，之后每 60 秒跟一次；换号会弹通知。
       React.useEffect(() => {
@@ -1066,6 +1105,19 @@ window.__ModuleLoader__.load({
           pushRouterStatus(status)
         } catch (err) {
           setError(String(err?.message || err))
+        }
+      }
+
+      const routerPick = async (id) => {
+        setPicking(true)
+        try {
+          const status = await api('/router/manual', { method: 'POST', body: JSON.stringify({ id }) })
+          pushRouterStatus(status)
+          await load()
+        } catch (err) {
+          setError(String(err?.message || err))
+        } finally {
+          if (mountedRef.current) setPicking(false)
         }
       }
 
@@ -1128,7 +1180,14 @@ window.__ModuleLoader__.load({
           ),
           error ? h('div', { className: 'ocu-msg', style: { margin: '0 0 12px' } }, `${COPY.fail}：${error}`) : null,
           notice ? h('div', { className: 'ocu-msg is-note' }, notice) : null,
-          h(RouterBar, { status: router, busy: routerBusy, onTick: routerTick, onToggle: routerToggle }),
+          h(RouterBar, {
+            status: router,
+            busy: routerBusy,
+            picking,
+            onTick: routerTick,
+            onToggle: routerToggle,
+            onPick: routerPick,
+          }),
           h(
             'div',
             { className: 'ocu-grid' },
