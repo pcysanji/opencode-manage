@@ -106,12 +106,14 @@ export function decide(rows, currentId, pinnedId) {
 
   let pinnedDropped = null
   if (pinnedId) {
-    const target = queue.find((row) => row.id === pinnedId)
+    // 手动选过就一直用它：额度满了也不换，只有账号被删掉才回落自动。
+    // 用户明确要求"选了手动就不要自动切号，除非选自动"。
+    const target = all.find((row) => row.id === pinnedId)
     if (target) {
-      return { all, queue, active: target, mode: 'pinned', reason: `指定用 ${target.label}`, pinnedDropped: null }
+      const why = target.blocked ? `指定用 ${target.label}（额度已满，不自动换）` : `指定用 ${target.label}`
+      return { all, queue, active: target, mode: 'pinned', reason: why, pinnedDropped: null }
     }
-    const gone = all.find((row) => row.id === pinnedId)
-    pinnedDropped = { id: pinnedId, label: gone ? gone.label : '', reason: gone ? gone.reason : '账号已不存在' }
+    pinnedDropped = { id: pinnedId, label: '', reason: '账号已不存在' }
   }
 
   const active = usable[0] || queue[0] || null

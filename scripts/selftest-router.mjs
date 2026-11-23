@@ -38,6 +38,7 @@ fs.writeFileSync(
 const usage = {
   'oc_sk_aaaa_0001': { rolling: 1, weekly: 10, monthly: 40, monthlyReset: '2026-12-01T00:00:00.000Z' },
   'oc_sk_bbbb_0002': { rolling: 1, weekly: 10, monthly: 20, monthlyReset: '2026-11-25T00:00:00.000Z' },
+  'oc_sk_cccc_0003': { rolling: 2, weekly: 12, monthly: 22, monthlyReset: '2026-11-27T00:00:00.000Z' },
 }
 
 const realFetch = globalThis.fetch
@@ -274,14 +275,15 @@ check('钉住的号 5 小时满了也不自己换（用户明选）', () => {
 })
 usage['oc_sk_aaaa_0001'].rolling = 1
 
-// 11. 钉住的号月满 → 回落自动并留痕
+// 11. 钉住的号月满 → 仍然钉住（用户说了：选了手动就别自动切，除非选自动）
 usage['oc_sk_aaaa_0001'].monthly = 100
-const dropped = await call('POST', '/router/tick', {})
-check('钉住的号月满后回到自动', () => {
-  assert.equal(dropped.mode, 'auto')
-  assert.equal(dropped.pinnedId, null)
-  assert.equal(dropped.activeId, 'ref:OPENCODE_GO_API_KEY')
-  assert.ok(dropped.pinnedDropped && dropped.pinnedDropped.reason, '应留下失效原因')
+const full = await call('POST', '/router/tick', {})
+check('钉住的号月满也不自动换', () => {
+  assert.equal(full.mode, 'pinned')
+  assert.equal(full.pinnedId, 'ref:OPENCODE_API_KEY')
+  assert.equal(full.activeId, 'ref:OPENCODE_API_KEY')
+  assert.equal(full.pinnedDropped, null)
+  assert.ok(/额度已满/.test(full.activeReason || ''), '应说明额度已满')
 })
 
 // 12. 点「自动」= 交回自动
@@ -298,6 +300,57 @@ check('点自动回到自动模式', () => {
 const res404 = await call('POST', '/router/pick', { id: 'ref:NOPE' }).catch((error) => error.message)
 check('指定不存在的账号报错', () => {
   assert.ok(String(res404).includes('404'), String(res404))
+})
+
+// 14. 自动出口（OPENCODE_GO_AUTO）与手填账号同 key 时，手填账号不能被吞掉
+const credFile = path.join(home, '.credentials.yaml')
+fs.writeFileSync(
+  credFile,
+  [
+    'version: 1',
+    'refs:',
+    "  OPENCODE_API_KEY: 'oc_sk_aaaa_0001'",
+    "  OPENCODE_GO_API_KEY: 'oc_sk_bbbb_0002'",
+    "  OPENCODE_GO_AUTO: 'oc_sk_cccc_0003'",
+    'records:',
+    '',
+  ].join('\n'),
+  'utf8',
+)
+
+const manualId = 'man:test-shared-key'
+const storeFile = path.join(home, 'opencode-usage', 'accounts.json')
+fs.mkdirSync(path.dirname(storeFile), { recursive: true })
+const store = fs.existsSync(storeFile)
+  ? JSON.parse(fs.readFileSync(storeFile, 'utf8'))
+  : { manual: [], aliases: {} }
+store.manual = [
+  ...(store.manual || []),
+  { id: manualId, label: '手工同号', key: 'oc_sk_cccc_0003', createdAt: new Date().toISOString() },
+]
+fs.writeFileSync(storeFile, JSON.stringify(store, null, 2), 'utf8')
+
+const shared = await call('POST', '/usage', {})
+check('自动出口与手填同 key 时，手填账号仍在列表里', () => {
+  const ids = shared.accounts.map((entry) => entry.id)
+  assert.ok(ids.includes(manualId), `缺少 ${manualId}：${ids.join(',')}`)
+  assert.equal(ids.includes('ref:OPENCODE_GO_AUTO'), false, '自动出口不该出现在账号列表里')
+})
+check('自动出口同 key 不会把手填账号改名', () => {
+  const target = shared.accounts.find((entry) => entry.id === manualId)
+  assert.equal(target.label, '手工同号')
+})
+
+const pinShared = await call('POST', '/router/pick', { id: manualId })
+check('钉住手填账号后进入 pinned', () => {
+  assert.equal(pinShared.mode, 'pinned')
+  assert.equal(pinShared.pinnedId, manualId)
+})
+const keepShared = await call('POST', '/router/tick', {})
+check('下一轮 tick 仍是 pinned，不再报"账号已不存在"', () => {
+  assert.equal(keepShared.mode, 'pinned')
+  assert.equal(keepShared.pinnedId, manualId)
+  assert.equal(keepShared.pinnedDropped, null)
 })
 
 globalThis.fetch = realFetch

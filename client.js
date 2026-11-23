@@ -235,6 +235,8 @@ window.__ModuleLoader__.load({
 
     const COPY = {
       tab: 'Go 余额',
+      crashTitle: 'Go 余额页面出错了',
+      crashHint: '把下面这段贴回对话里，我照着修。',
       title: 'Go 余额',
       refresh: '刷新全部',
       refreshing: '刷新中…',
@@ -289,6 +291,7 @@ window.__ModuleLoader__.load({
       routerSelecting: '当前选',
       routerPickHint: '点一下切到这个账号（一直用它，直到月额度用满才回到自动）',
       routerPinnedDropped: '指定的号月额度满了，已回到自动',
+      routerPinnedFull: '额度已满，不会自动换；点「自动」才切',
       tagRolling: '5h满',
       tagWeekly: '周满',
       routerSwitched: '已换号',
@@ -587,6 +590,30 @@ window.__ModuleLoader__.load({
 .ocu-edit-actions { display: flex; gap: 6px; align-items: center; margin-top: 2px; }
 .ocu-edit-actions .ocu-btn.danger { margin-left: auto; }
 .ocu-msg { font-size: 11px; color: var(--dsw-alias-state-error-primary); }
+.ocu-crash {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  border-radius: 14px;
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid color-mix(in srgb, var(--dsw-alias-state-error-primary) 30%, var(--dsw-alias-border-l1));
+}
+.ocu-crash-title { font-size: 14px; font-weight: 600; color: var(--dsw-alias-state-error-primary); }
+.ocu-crash-hint { font-size: 12px; color: var(--dsw-alias-label-secondary); }
+.ocu-crash-detail {
+  margin: 0;
+  padding: 10px 12px;
+  max-height: 320px;
+  overflow: auto;
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 .ocu-msg.is-note {
   margin: 0 0 12px; padding: 7px 10px; border-radius: 8px;
   color: var(--dsw-alias-label-secondary);
@@ -615,6 +642,7 @@ window.__ModuleLoader__.load({
 .ocu-router-state { color: var(--dsw-alias-label-secondary); }
 .ocu-router-sep { color: var(--dsw-alias-label-tertiary); }
 .ocu-router-active { color: var(--dsw-alias-label-primary); font-variant-numeric: tabular-nums; }
+.ocu-router-full { font-size: 12px; color: var(--dsw-alias-state-warning-primary); white-space: nowrap; }
 .ocu-router-time { margin-left: auto; font-size: 11px; color: var(--dsw-alias-label-tertiary); }
 .ocu-router-actions { display: flex; gap: 6px; }
 .ocu-queue { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
@@ -956,6 +984,9 @@ window.__ModuleLoader__.load({
             { className: 'ocu-router-active' },
             pinned ? `${COPY.routerSelecting} ${now}` : `${COPY.routerSelecting} ${COPY.routerAuto}（用 ${now}）`,
           ),
+          pinned && active && active.blocked
+            ? h('span', { className: 'ocu-router-full' }, COPY.routerPinnedFull)
+            : null,
           active && active.reason && !pinned
             ? h('span', { className: 'ocu-router-time' }, active.reason)
             : null,
@@ -1017,6 +1048,39 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /** 渲染兜底：组件里抛错时不要变成一整片空白，至少把原因写在页面上。
+     *  预览页的极简 React shim 没有 class 组件，那边退化成直通。 */
+    const ViewBoundary = typeof React.Component === 'function' ? class ViewBoundary extends React.Component {
+      constructor(props) {
+        super(props)
+        this.state = { error: null }
+      }
+
+      static getDerivedStateFromError(error) {
+        return { error }
+      }
+
+      componentDidCatch(error, info) {
+        console.error('[opencode-manage] 页面渲染出错', error, info)
+      }
+
+      render() {
+        if (!this.state.error) return this.props.children
+        const detail = String((this.state.error && this.state.error.stack) || this.state.error)
+        return h(
+          'div',
+          { className: 'ocu-crash' },
+          h('div', { className: 'ocu-crash-title' }, COPY.crashTitle),
+          h('div', { className: 'ocu-crash-hint' }, COPY.crashHint),
+          h('pre', { className: 'ocu-crash-detail' }, detail),
+        )
+      }
+    } : function Passthrough(props) { return props.children }
+
+    function SafeView(props) {
+      return h(ViewBoundary, null, h(UsageView, props))
+    }
+
     function UsageView() {
       const [rows, setRows] = React.useState(null)
       const [loading, setLoading] = React.useState(false)
@@ -1071,12 +1135,13 @@ window.__ModuleLoader__.load({
         return () => AUTO.subscribers.delete(onAuto)
       }, [])
 
-      // 手动指定的号失效（比如自己爆了额度）时，宿主会把标记清掉并留痕，这里提示一句
+      // 钉住的号失效（比如自己爆了额度）时，宿主会把标记清掉并留痕，这里提示一句
+      const pinnedDropped = router && router.pinnedDropped ? router.pinnedDropped : null
       React.useEffect(() => {
-        if (router && router.pinnedDropped && router.manualDropped.at) {
-          setNotice(`${COPY.routerPinnedDropped}（${router.manualDropped.label || ''}${router.manualDropped.reason ? `：${router.manualDropped.reason}` : ''}）`)
+        if (pinnedDropped && pinnedDropped.at) {
+          setNotice(`${COPY.routerPinnedDropped}（${pinnedDropped.label || ''}${pinnedDropped.reason ? `：${pinnedDropped.reason}` : ''}）`)
         }
-      }, [router && router.manualDropped && router.manualDropped.at])
+      }, [pinnedDropped && pinnedDropped.at])
 
       // 自动切号状态：进页面先拿一次，之后每 60 秒跟一次；换号会弹通知。
       React.useEffect(() => {
@@ -1291,7 +1356,7 @@ window.__ModuleLoader__.load({
             order: 50,
             label: () => COPY.tab,
           },
-          UsageView,
+          SafeView,
         ),
       )
     }

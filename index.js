@@ -158,6 +158,10 @@ function providerConfigs(ctx) {
 function detectAccounts(ctx) {
   const refs = readCredentialRefs()
   const store = loadStore()
+  // OPENCODE_GO_AUTO 是插件自己写进去的「当前在用」出口，不是用户账号。
+  // 它和手填账号指向同一把 key，一旦参与按 key 去重就会把真账号吞掉 ——
+  // 用户钉住的 id 下一轮就变成「已不存在」，于是又被自动切走。
+  const skipRef = (ref) => ref === ROUTER_REF
   const accounts = []
   const byRef = new Set()
   const byKey = new Map()
@@ -180,14 +184,14 @@ function detectAccounts(ctx) {
     if (!/opencode\.ai/i.test(baseURL)) continue
     const ref = typeof config?.apiKeyEnv === 'string' ? config.apiKeyEnv : ''
     const name = typeof config?.displayName === 'string' ? config.displayName.trim() : ''
-    if (ref && name && !nameByRef.has(ref)) nameByRef.set(ref, name)
+    if (ref && name && !skipRef(ref) && !nameByRef.has(ref)) nameByRef.set(ref, name)
   }
 
   for (const [providerId, config] of Object.entries(providers)) {
     const baseURL = typeof config?.baseURL === 'string' ? config.baseURL : ''
     if (!/opencode\.ai/i.test(baseURL)) continue
     const ref = typeof config?.apiKeyEnv === 'string' ? config.apiKeyEnv : ''
-    if (!ref || byRef.has(ref)) continue
+    if (!ref || skipRef(ref) || byRef.has(ref)) continue
     byRef.add(ref)
     push({
       // id 跟着 ref 走：名字只影响展示，别名与台账不会因为来源切换而失联。
@@ -202,6 +206,7 @@ function detectAccounts(ctx) {
 
   for (const [ref, value] of Object.entries(refs)) {
     if (!/opencode/i.test(ref)) continue
+    if (skipRef(ref)) continue
     if (!/^oc_/.test(value)) continue
     if (byRef.has(ref)) continue
     byRef.add(ref)
