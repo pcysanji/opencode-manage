@@ -284,11 +284,13 @@ window.__ModuleLoader__.load({
       routerBlocked: '停用',
       routerHint: '每 5 分钟在后台看一眼 5 小时/周/月额度：谁先重置用谁；5 小时或周额度到 99.9% 换下一个；月额度到 100% 停用到下个重置日。点某个账号可以直接切过去。',
       routerModelHint: '模型列表里的「OpenCode Go 自动」用这份 key，换号下一次请求就生效。',
-      routerManual: '手动',
-      routerManualOn: '手动指定中',
-      routerBackAuto: '回到自动',
-      routerPickHint: '点一下立即切到这个账号（手动指定，自动逻辑不再抢；它自己爆额度或你点「回到自动」才交回）',
-      routerManualDropped: '手动指定的号不可用了，已回到自动',
+      routerAuto: '自动',
+      routerAutoPick: '选自动：按规则挑月重置最近、额度够用的那个',
+      routerSelecting: '当前选',
+      routerPickHint: '点一下切到这个账号（一直用它，直到月额度用满才回到自动）',
+      routerPinnedDropped: '指定的号月额度满了，已回到自动',
+      tagRolling: '5h满',
+      tagWeekly: '周满',
       routerSwitched: '已换号',
       routerSame: '不用换',
       routerCheckedAt: '检查于',
@@ -635,8 +637,8 @@ window.__ModuleLoader__.load({
   color: var(--dsw-alias-label-primary);
 }
 .ocu-chip.is-clickable:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary); outline-offset: 2px; }
-.ocu-chip.is-manual { border-style: dashed; border-color: color-mix(in srgb, var(--dsw-alias-state-business-primary) 55%, transparent); }
-.ocu-chip-tag.is-manual { color: var(--dsw-alias-state-business-primary); }
+.ocu-chip.is-auto { font-weight: 500; }
+.ocu-chip.is-pinned { border-style: dashed; }
 .ocu-chip-no { font-variant-numeric: tabular-nums; color: var(--dsw-alias-label-tertiary); }
 .ocu-chip-num { font-variant-numeric: tabular-nums; color: var(--dsw-alias-label-tertiary); }
 .ocu-chip-tag { color: var(--dsw-alias-state-error-primary); font-size: 10px; }
@@ -921,12 +923,23 @@ window.__ModuleLoader__.load({
       return `${Number.isInteger(rounded) ? rounded : rounded.toFixed(1)}%`
     }
 
+    function tagOf(row) {
+      if (row.blocked === 'monthly') return COPY.routerBlocked
+      if (row.blocked === 'rolling') return COPY.tagRolling
+      if (row.blocked === 'weekly') return COPY.tagWeekly
+      return ''
+    }
+
     function RouterBar({ status, busy, onTick, onToggle, onPick, picking }) {
       if (!status) return null
       const on = status.enabled !== false
       const rows = status.lastCheck && Array.isArray(status.lastCheck.rows) ? status.lastCheck.rows : []
       const activeId = status.activeId || ''
-      const manualId = status.manualId || ''
+      const pinned = status.mode === 'pinned'
+      const active = rows.find((row) => row.id === activeId)
+      const now = status.activeLabel
+        ? `${status.activeLabel}${status.activeKeyTail ? ` …${status.activeKeyTail}` : ''}`
+        : COPY.routerIdle
 
       return h(
         'div',
@@ -937,58 +950,63 @@ window.__ModuleLoader__.load({
           h('span', { className: 'ocu-router-dot' }),
           h('span', { className: 'ocu-router-name' }, COPY.routerTitle),
           h('span', { className: 'ocu-router-state' }, on ? COPY.routerOn : COPY.routerOff),
-          manualId ? h('span', { className: 'ocu-chip-tag is-manual' }, COPY.routerManualOn) : null,
           h('span', { className: 'ocu-router-sep' }, '·'),
           h(
             'span',
             { className: 'ocu-router-active' },
-            status.activeLabel
-              ? `${COPY.routerNow} ${status.activeLabel}${status.activeKeyTail ? ` …${status.activeKeyTail}` : ''}`
-              : COPY.routerIdle,
+            pinned ? `${COPY.routerSelecting} ${now}` : `${COPY.routerSelecting} ${COPY.routerAuto}（用 ${now}）`,
           ),
+          active && active.reason && !pinned
+            ? h('span', { className: 'ocu-router-time' }, active.reason)
+            : null,
           h('span', { className: 'ocu-router-time', title: COPY.routerModelHint }, status.checkedAt ? `${COPY.routerCheckedAt} ${fmtClock(status.checkedAt)}` : ''),
           h(
             'div',
             { className: 'ocu-router-actions' },
             h('button', { className: 'ocu-btn', disabled: busy, onClick: onTick, title: COPY.routerHint }, busy ? COPY.routerChecking : COPY.routerCheck),
             h('button', { className: 'ocu-btn', onClick: onToggle }, on ? COPY.routerToggleOff : COPY.routerToggleOn),
-            manualId
-              ? h('button', { className: 'ocu-btn', disabled: picking, onClick: () => onPick('') }, COPY.routerBackAuto)
-              : null,
           ),
         ),
-        rows.length
-          ? h(
-              'div',
-              { className: 'ocu-queue' },
-              rows.map((row, index) =>
-                h(
-                  'button',
-                  {
-                    key: row.id,
-                    type: 'button',
-                    disabled: picking,
-                    className: [
-                      'ocu-chip',
-                      'is-clickable',
-                      row.blocked ? 'is-blocked' : '',
-                      row.id === activeId ? 'is-active' : '',
-                      row.id === manualId ? 'is-manual' : '',
-                    ]
-                      .filter(Boolean)
-                      .join(' '),
-                    title: row.blocked ? `${row.reason}（也可以点，切过去会立刻报错）` : COPY.routerPickHint,
-                    onClick: () => onPick(row.id === manualId ? '' : row.id),
-                  },
-                  h('span', { className: 'ocu-chip-no' }, String(index + 1)),
-                  h('span', null, row.label),
-                  h('span', { className: 'ocu-chip-num' }, `5h${fmtPct(row.rolling)} · 周${fmtPct(row.weekly)} · 月${fmtPct(row.monthly)}`),
-                  row.blocked ? h('span', { className: 'ocu-chip-tag' }, COPY.routerBlocked) : null,
-                  row.id === manualId ? h('span', { className: 'ocu-chip-tag is-manual' }, COPY.routerManual) : null,
-                ),
-              ),
-            )
-          : null,
+        h(
+          'div',
+          { className: 'ocu-queue' },
+          h(
+            'button',
+            {
+              type: 'button',
+              disabled: picking,
+              className: ['ocu-chip', 'is-clickable', 'is-auto', !pinned ? 'is-active' : ''].filter(Boolean).join(' '),
+              title: COPY.routerAutoPick,
+              onClick: () => onPick(''),
+            },
+            h('span', null, COPY.routerAuto),
+          ),
+          rows.map((row, index) =>
+            h(
+              'button',
+              {
+                key: row.id,
+                type: 'button',
+                disabled: picking,
+                className: [
+                  'ocu-chip',
+                  'is-clickable',
+                  row.blocked === 'monthly' ? 'is-blocked' : '',
+                  pinned && row.id === activeId ? 'is-active' : '',
+                  pinned && row.id === activeId ? 'is-pinned' : '',
+                ]
+                  .filter(Boolean)
+                  .join(' '),
+                title: row.blocked ? row.reason : COPY.routerPickHint,
+                onClick: () => onPick(row.id),
+              },
+              h('span', { className: 'ocu-chip-no' }, String(index + 1)),
+              h('span', null, row.label),
+              h('span', { className: 'ocu-chip-num' }, `5h${fmtPct(row.rolling)} · 周${fmtPct(row.weekly)} · 月${fmtPct(row.monthly)}`),
+              tagOf(row) ? h('span', { className: 'ocu-chip-tag' }, tagOf(row)) : null,
+            ),
+          ),
+        ),
         status.lastSwitch
           ? h(
               'div',
@@ -1055,8 +1073,8 @@ window.__ModuleLoader__.load({
 
       // 手动指定的号失效（比如自己爆了额度）时，宿主会把标记清掉并留痕，这里提示一句
       React.useEffect(() => {
-        if (router && router.manualDropped && router.manualDropped.at) {
-          setNotice(`${COPY.routerManualDropped}（${router.manualDropped.label || ''}${router.manualDropped.reason ? `：${router.manualDropped.reason}` : ''}）`)
+        if (router && router.pinnedDropped && router.manualDropped.at) {
+          setNotice(`${COPY.routerPinnedDropped}（${router.manualDropped.label || ''}${router.manualDropped.reason ? `：${router.manualDropped.reason}` : ''}）`)
         }
       }, [router && router.manualDropped && router.manualDropped.at])
 
@@ -1111,7 +1129,7 @@ window.__ModuleLoader__.load({
       const routerPick = async (id) => {
         setPicking(true)
         try {
-          const status = await api('/router/manual', { method: 'POST', body: JSON.stringify({ id }) })
+          const status = await api('/router/pick', { method: 'POST', body: JSON.stringify({ id }) })
           pushRouterStatus(status)
           await load()
         } catch (err) {

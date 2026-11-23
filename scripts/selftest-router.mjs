@@ -8,6 +8,7 @@
  *  4. 月额度到 100% 停用；全停用时保持原号不动
  *  5. 关掉开关后不再换号
  *  6. 页面能拿到的 payload 里没有完整 key
+ *  7. 5 小时满只是让位，恢复后回到月重置最早的号；点账号 = 钉住，月满才回落自动
  *
  *   node scripts/selftest-router.mjs
  */
@@ -153,9 +154,10 @@ check('周额度 99.9% 换到下一个', () => {
   assert.equal(status.activeKeyTail, '0001')
   assert.equal(writes.at(-1)[1], 'oc_sk_aaaa_0001')
 })
-check('队列里能用的排在出局的后面', () => {
-  const index = status.lastCheck.rows.findIndex((row) => row.blocked)
-  assert.ok(index > 0, '出局的号应该排在后面')
+check('队列按规则排序，满额的只在选择时跳过', () => {
+  const blocked = status.lastCheck.rows.find((row) => row.blocked)
+  assert.ok(blocked, '应该有一个满额被标记的号')
+  assert.notEqual(status.activeId, blocked.id, '被跳过的号不能被选为当前')
 })
 
 // 4. 两个号都月额度满 100% → 全部停用，保持原号不动
@@ -221,43 +223,79 @@ check('chip 带 5 小时用量', () => {
   assert.equal(typeof row.rolling, 'number')
 })
 
-// 9. 手动指定：切到指定号，并且自动逻辑不抢
+// 9. 5 小时满只是让位：恢复后自动回到月重置最早的号
+usage['oc_sk_aaaa_0001'] = { rolling: 1, weekly: 10, monthly: 40, monthlyReset: '2026-12-01T00:00:00.000Z' }
+usage['oc_sk_bbbb_0002'] = { rolling: 1, weekly: 10, monthly: 20, monthlyReset: '2026-11-25T00:00:00.000Z' }
+status = await call('POST', '/router/tick', {})
+check('按规则选月重置最早的号（B）', () => {
+  assert.equal(status.activeId, 'ref:OPENCODE_GO_API_KEY')
+  assert.equal(status.mode, 'auto')
+})
+
+usage['oc_sk_bbbb_0002'].rolling = 99.9
+status = await call('POST', '/router/tick', {})
+check('5 小时满 → 暂时让位给下一个', () => {
+  assert.equal(status.activeId, 'ref:OPENCODE_API_KEY')
+  const row = status.lastCheck.rows.find((entry) => entry.id === 'ref:OPENCODE_GO_API_KEY')
+  assert.equal(row.blocked, 'rolling')
+  assert.equal(row.reason, '5 小时窗口用满')
+})
+check('让位的号仍排在队列里（不是停用）', () => {
+  const ids = status.lastCheck.rows.map((row) => row.id)
+  assert.ok(ids.includes('ref:OPENCODE_GO_API_KEY'))
+})
+
 usage['oc_sk_bbbb_0002'].rolling = 1
-usage['oc_sk_bbbb_0002'].weekly = 10
-usage['oc_sk_bbbb_0002'].monthly = 20
-usage['oc_sk_aaaa_0001'].monthly = 40
-const picked = await call('POST', '/router/manual', { id: 'ref:OPENCODE_GO_API_KEY' })
-check('手动切到指定账号', () => {
-  assert.equal(picked.activeId, 'ref:OPENCODE_GO_API_KEY')
-  assert.equal(picked.manualId, 'ref:OPENCODE_GO_API_KEY')
+status = await call('POST', '/router/tick', {})
+check('5 小时恢复后自动切回月重置最早的号', () => {
+  assert.equal(status.activeId, 'ref:OPENCODE_GO_API_KEY')
   assert.equal(writes.at(-1)[1], 'oc_sk_bbbb_0002')
 })
+
+// 10. 点某个账号 = 钉住它，自动不抢
+const picked = await call('POST', '/router/pick', { id: 'ref:OPENCODE_API_KEY' })
+check('点账号切到它并进入 pinned', () => {
+  assert.equal(picked.activeId, 'ref:OPENCODE_API_KEY')
+  assert.equal(picked.mode, 'pinned')
+  assert.equal(picked.pinnedId, 'ref:OPENCODE_API_KEY')
+  assert.equal(writes.at(-1)[1], 'oc_sk_aaaa_0001')
+})
 const keep = await call('POST', '/router/tick', {})
-check('手动期间自动不抢（即使另一个月重置更早）', () => {
-  assert.equal(keep.activeId, 'ref:OPENCODE_GO_API_KEY')
-  assert.equal(keep.manualId, 'ref:OPENCODE_GO_API_KEY')
+check('钉住期间自动不抢（即使另一个月重置更早）', () => {
+  assert.equal(keep.activeId, 'ref:OPENCODE_API_KEY')
+  assert.equal(keep.mode, 'pinned')
 })
 
-// 10. 手动指定的号自己爆额度 → 退回自动并留痕
-usage['oc_sk_bbbb_0002'].monthly = 100
+usage['oc_sk_aaaa_0001'].rolling = 99.9
+const pinnedBusy = await call('POST', '/router/tick', {})
+check('钉住的号 5 小时满了也不自己换（用户明选）', () => {
+  assert.equal(pinnedBusy.activeId, 'ref:OPENCODE_API_KEY')
+  assert.equal(pinnedBusy.mode, 'pinned')
+})
+usage['oc_sk_aaaa_0001'].rolling = 1
+
+// 11. 钉住的号月满 → 回落自动并留痕
+usage['oc_sk_aaaa_0001'].monthly = 100
 const dropped = await call('POST', '/router/tick', {})
-check('手动号爆额度后回到自动', () => {
-  assert.equal(dropped.manualId, null)
-  assert.equal(dropped.activeId, 'ref:OPENCODE_API_KEY')
-  assert.ok(dropped.manualDropped && dropped.manualDropped.reason, '应留下失效原因')
+check('钉住的号月满后回到自动', () => {
+  assert.equal(dropped.mode, 'auto')
+  assert.equal(dropped.pinnedId, null)
+  assert.equal(dropped.activeId, 'ref:OPENCODE_GO_API_KEY')
+  assert.ok(dropped.pinnedDropped && dropped.pinnedDropped.reason, '应留下失效原因')
 })
 
-// 11. 空 id = 交回自动
-usage['oc_sk_bbbb_0002'].monthly = 20
-const pick2 = await call('POST', '/router/manual', { id: 'ref:OPENCODE_GO_API_KEY' })
-check('再手动指定一次', () => assert.equal(pick2.manualId, 'ref:OPENCODE_GO_API_KEY'))
-const backAuto = await call('POST', '/router/manual', { id: '' })
-check('传空 id 回到自动', () => {
-  assert.equal(backAuto.manualId, null)
+// 12. 点「自动」= 交回自动
+usage['oc_sk_aaaa_0001'].monthly = 40
+const pick2 = await call('POST', '/router/pick', { id: 'ref:OPENCODE_API_KEY' })
+check('再点一次账号', () => assert.equal(pick2.mode, 'pinned'))
+const backAuto = await call('POST', '/router/pick', { id: '' })
+check('点自动回到自动模式', () => {
+  assert.equal(backAuto.mode, 'auto')
+  assert.equal(backAuto.pinnedId, null)
 })
 
-// 12. 指定不存在的账号 → 404
-const res404 = await call('POST', '/router/manual', { id: 'ref:NOPE' }).catch((error) => error.message)
+// 13. 指定不存在的账号 → 404
+const res404 = await call('POST', '/router/pick', { id: 'ref:NOPE' }).catch((error) => error.message)
 check('指定不存在的账号报错', () => {
   assert.ok(String(res404).includes('404'), String(res404))
 })

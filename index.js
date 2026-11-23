@@ -348,17 +348,18 @@ async function routerRun(ctx) {
     accounts.map((account) => fetchUsage(keyOf(account, refs, store))),
   )
   const rows = rowsForRouter(accounts, refs, store, results)
-  const decision = decide(rows, state.activeId, state.manualId)
+  const decision = decide(rows, state.activeId, state.pinnedId)
   // 开关关掉时只刷新数字，不换号：把"当前应该用谁"钉回正在用的那个
   const disabled = state.enabled === false
   const active = disabled
     ? decision.all.find((row) => row.id === state.activeId) || null
     : decision.active
   const { next, switched } = nextState(state, { ...decision, active })
-  if (decision.manual && active) {
-    next.manualId = active.id
-    next.manualLabel = active.label
-    next.manualSince = state.manualId === active.id ? state.manualSince : new Date().toISOString()
+  if (decision.mode === 'pinned' && active) {
+    next.pinnedId = active.id
+    next.pinnedLabel = active.label
+    next.pinnedSince = state.pinnedId === active.id ? state.pinnedSince : new Date().toISOString()
+    next.mode = 'pinned'
   }
   // 顺序：能用的按优先级排前面，出局的排后面，页面上的 1 / 2 / 3 就是使用顺序
   next.lastCheck = {
@@ -407,10 +408,11 @@ function routerPayload(state) {
     switches: state.switches || [],
     lastCheck: state.lastCheck || null,
     lastError: state.lastError || null,
-    manualId: state.manualId || null,
-    manualLabel: state.manualLabel || '',
-    manualSince: state.manualSince || null,
-    manualDropped: state.manualDropped || null,
+    mode: state.mode === 'pinned' ? 'pinned' : 'auto',
+    pinnedId: state.pinnedId || null,
+    pinnedLabel: state.pinnedLabel || '',
+    pinnedSince: state.pinnedSince || null,
+    pinnedDropped: state.pinnedDropped || null,
   }
 }
 
@@ -446,21 +448,22 @@ async function handleRequest(ctx, req, res) {
       return sendJson(res, 200, routerPayload(state))
     }
 
-    if (sub === '/router/manual' && method === 'POST') {
+    if ((sub === '/router/pick' || sub === '/router/manual') && method === 'POST') {
       const body = await readJsonBody(req)
       const id = typeof body.id === 'string' ? body.id : ''
       const state = loadRouterState(HOME)
-      // 空 id = 交回自动
-      state.manualId = id || null
-      state.manualLabel = ''
-      state.manualSince = null
-      state.manualDropped = null
+      // 空 id = 选「自动」
+      state.pinnedId = id || null
+      state.pinnedLabel = ''
+      state.pinnedSince = null
+      state.pinnedDropped = null
+      state.mode = id ? 'pinned' : 'auto'
       if (id) {
         const { accounts } = detectAccounts(ctx)
         const target = accounts.find((entry) => entry.id === id)
         if (!target) return sendJson(res, 404, { error: 'NOT_FOUND', message: '没有这个账号' })
-        state.manualLabel = target.label
-        state.manualSince = new Date().toISOString()
+        state.pinnedLabel = target.label
+        state.pinnedSince = new Date().toISOString()
       }
       saveRouterState(HOME, state)
       const result = await routerRun(ctx)

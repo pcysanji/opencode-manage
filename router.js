@@ -4,7 +4,8 @@
  *   - 三个窗口都参与判断：5 小时、本周、本月；
  *   - 排序不看开通时间，看「月额度重置日」——谁先重置就用谁（先重置 = 更快回血）；
  *   - 5 小时或周额度到 99.9% 就换下一个；月额度到 100% 就停用到下个重置日；
- *   - 支持手动指定账号：手动期间自动逻辑不覆盖它，直到它自己也爆额度或用户点回「自动」；
+ *   - 队列里第一个 chip 是「自动」（= 按上面规则自动挑），后面每个账号可直接点选；
+ *   - 点选某个账号 = 钉住它，直到它月额度用满才回落自动；5 小时/周满只是让位，不算出局；
  *   - 换 key 由宿主在这里做，模型路由那边下一次请求就解析到新 key，不需要重启。
  */
 
@@ -74,70 +75,54 @@ export function evaluateRow(row) {
   }
 }
 
-/** 能用的账号按「月重置日最早 → 周用量最低 → 5 小时用量最低」排序。 */
+/** 全部账号按「月重置日最早 → 周用量 → 5 小时用量」排序（含月满的，只是它在队列里排最后）。 */
+export function sortRows(rows) {
+  return rows.map(evaluateRow).sort((a, b) => {
+    const ta = timeOf(a.monthlyResetsAt) ?? Number.MAX_SAFE_INTEGER
+    const tb = timeOf(b.monthlyResetsAt) ?? Number.MAX_SAFE_INTEGER
+    if (ta !== tb) return ta - tb
+    const wa = a.weekly ?? 0
+    const wb = b.weekly ?? 0
+    if (wa !== wb) return wa - wb
+    return (a.rolling ?? 0) - (b.rolling ?? 0)
+  })
+}
+
+/** 队列 = 队列顺序里还不到「月满」的号；月满的只作为停用项留在 all 里。 */
 export function rankRows(rows) {
-  return rows
-    .map(evaluateRow)
-    .filter((row) => !row.blocked)
-    .sort((a, b) => {
-      const ta = timeOf(a.monthlyResetsAt) ?? Number.MAX_SAFE_INTEGER
-      const tb = timeOf(b.monthlyResetsAt) ?? Number.MAX_SAFE_INTEGER
-      if (ta !== tb) return ta - tb
-      const wa = a.weekly ?? 0
-      const wb = b.weekly ?? 0
-      if (wa !== wb) return wa - wb
-      return (a.rolling ?? 0) - (b.rolling ?? 0)
-    })
+  return sortRows(rows).filter((row) => row.blocked !== 'monthly')
 }
 
 /**
  * 选当前该用哪个账号。
- *  - 手动指定优先：只要被指定的号还在额度内就一直用它，自动逻辑不抢；
- *  - 手动指定的号也爆额度/失效时立刻退回自动，并把这件事记下来（manualDropped）；
- *  - 自动：当前账号还在额度内、且月重置日与第一名相同（同一天重置）时留用，避免来回跳。
+ *  - pinnedId（用户点选的账号）还在队列里就一直用它，哪怕它 5 小时/周已经满了——用户明说了算；
+ *  - pinnedId 月满或账号没了：本轮回落自动，并记下 pinnedDropped 让调用方清标记；
+ *  - 自动：取队列里第一个「5 小时、周、月都没满」的号；都满了就先取月重置最近的那个（等 5 小时回血后自然切回来）。
  */
-export function decide(rows, currentId, manualId) {
-  const all = rows.map(evaluateRow)
-  const queue = rankRows(all)
+export function decide(rows, currentId, pinnedId) {
+  const all = sortRows(rows)
+  const queue = all.filter((row) => row.blocked !== 'monthly')
+  const usable = queue.filter((row) => !row.blocked)
 
-  if (manualId) {
-    const picked = all.find((row) => row.id === manualId)
-    if (picked && !picked.blocked) {
-      return { all, queue, active: picked, reason: '手动指定', manual: true, manualDropped: null }
+  let pinnedDropped = null
+  if (pinnedId) {
+    const target = queue.find((row) => row.id === pinnedId)
+    if (target) {
+      return { all, queue, active: target, mode: 'pinned', reason: `指定用 ${target.label}`, pinnedDropped: null }
     }
-    // 手动目标不可用了：这一轮退回自动，并告知调用方清掉手动标记
-    const manualDropped = { id: manualId, label: picked ? picked.label : '', reason: picked ? picked.reason : '账号已不存在' }
-    if (!queue.length) {
-      return { all, queue, active: null, reason: '所有账号都用满了', manual: false, manualDropped }
-    }
-    const firstFallback = queue[0]
-    return {
-      all,
-      queue,
-      active: firstFallback,
-      reason: `手动指定的号不可用了（${manualDropped.reason}），回到自动`,
-      manual: false,
-      manualDropped,
-    }
+    const gone = all.find((row) => row.id === pinnedId)
+    pinnedDropped = { id: pinnedId, label: gone ? gone.label : '', reason: gone ? gone.reason : '账号已不存在' }
   }
 
-  if (!queue.length) {
-    return { all, queue, active: null, reason: '所有账号都用满了', manual: false, manualDropped: null }
+  const active = usable[0] || queue[0] || null
+  let reason = '自动：用月重置日最近的那个'
+  if (active && active.blocked) reason = '自动：都到上限了，先占着月重置最近的'
+  else if (active && currentId && active.id !== currentId) {
+    const previous = queue.find((row) => row.id === currentId)
+    if (previous && previous.blocked) reason = `自动：${previous.label} ${previous.reason}，换 ${active.label}`
   }
 
-  const first = queue[0]
-  const current = currentId ? queue.find((row) => row.id === currentId) : null
-  const sameReset = current && timeOf(current.monthlyResetsAt) === timeOf(first.monthlyResetsAt)
-  const active = current && sameReset && (current.weekly ?? 0) <= (first.weekly ?? 0) ? current : first
-
-  return {
-    all,
-    queue,
-    active,
-    reason: active === current && current !== first ? '同一天重置，继续用现在的' : '用月重置日最近的那个',
-    manual: false,
-    manualDropped: null,
-  }
+  return { all, queue, active, mode: 'auto', reason, pinnedDropped }
 }
 
 export function statePath(home) {
@@ -154,18 +139,25 @@ export function defaultState() {
     lastSwitch: null,
     switches: [],
     checkedAt: null,
-    manualId: null,
-    manualLabel: '',
-    manualSince: null,
+    mode: 'auto',
+    pinnedId: null,
+    pinnedLabel: '',
+    pinnedSince: null,
   }
 }
 
 export function loadRouterState(home) {
   try {
     const parsed = JSON.parse(fs.readFileSync(statePath(home), 'utf8'))
+    const base = defaultState()
+    const pinnedId = parsed.pinnedId ?? parsed.manualId ?? null
     return {
-      ...defaultState(),
+      ...base,
       ...parsed,
+      pinnedId,
+      pinnedLabel: parsed.pinnedLabel ?? (pinnedId ? parsed.manualLabel || '' : ''),
+      pinnedSince: parsed.pinnedSince ?? (pinnedId ? parsed.manualSince || null : null),
+      mode: pinnedId ? 'pinned' : 'auto',
       switches: Array.isArray(parsed.switches) ? parsed.switches.slice(0, 20) : [],
     }
   } catch {
@@ -189,12 +181,13 @@ export function nextState(state, decision, now = new Date().toISOString()) {
   const active = decision.active
   const next = { ...state, checkedAt: now }
 
-  // 手动指定的号失效了：这一轮已退回自动，把标记清掉免得下一轮又试它
-  if (decision.manualDropped) {
-    next.manualId = null
-    next.manualLabel = ''
-    next.manualSince = null
-    next.manualDropped = { at: now, ...decision.manualDropped }
+  // 钉住的号失效了（月满/账号没了）：这一轮已回落自动，把标记清掉免得下一轮又试它
+  if (decision.pinnedDropped) {
+    next.pinnedId = null
+    next.pinnedLabel = ''
+    next.pinnedSince = null
+    next.mode = 'auto'
+    next.pinnedDropped = { at: now, ...decision.pinnedDropped }
   }
 
   if (!active) return { next, switched: false }
@@ -203,6 +196,7 @@ export function nextState(state, decision, now = new Date().toISOString()) {
   next.activeLabel = active.label
   next.activeKeyTail = active.keyTail || ''
   next.activeReason = decision.reason
+  next.mode = decision.mode || (next.pinnedId ? 'pinned' : 'auto')
 
   if (state.activeId === active.id) return { next, switched: false }
 
